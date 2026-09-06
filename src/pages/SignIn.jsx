@@ -4,12 +4,10 @@ import {
   signInWithCustomToken,
 } from "firebase/auth";
 import { auth2 } from "../firebase/config";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { getDoc, doc, getFirestore } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/router";
 
-import { jwtVerify } from "jose";
 import Loading from "@/components/Loading";
 
 const db = getFirestore();
@@ -31,113 +29,73 @@ const SignInForm = () => {
     year: "",
   });
 
-  const { token } = router.query;
+  const { token, year, term } = router.query;
 
   useEffect(() => {
     const signintoken = async () => {
-      setloader(true)
-
-
-      if(token){
-      const secretKey =
-        "b5682868ab17c3780ac25d1213479dffae913e2e9a7ea77d131010aee7fd4e3a";
-      const secretKeycode = new TextEncoder().encode(
-        secretKey
-      );
-
-      try {
-        // Verify and decode the JWT
-        console.log("tok", token);
-
-        const decodedToken = await jwtVerify(token, secretKeycode);
-
-        if (decodedToken) {
-          console.log("decoded", decodedToken);
-
-          const { yeargotten, termgotten, emailgotten, passwordgotten } =
-            decodedToken.payload;
-
-            if (yeargotten && termgotten && emailgotten && passwordgotten) {
-              console.log("ddec", yeargotten, termgotten, emailgotten);
-      
-              localStorage.setItem("studentyear", "2023");
-              localStorage.setItem("studentterm", "1st");
-
-              const setyear = localStorage.getItem("studentyear");
-              const setterm = localStorage.getItem("studentterm");
-
-              if(setyear && setterm){
-
-      
-              if (canload) {
-                try {
-                  console.log("log with token");
-                  const { user } = await signInWithEmailAndPassword(
-                    auth2,
-                    emailgotten,
-                    passwordgotten
-                  );
-                  console.log("logged with token", user, user.uid);
-      
-                  const studentDocRef = doc(
-                    db,
-                    yeargotten,
-                    termgotten,
-                    "students",
-                    user.uid
-                  );
-                  const studentDocSnapshot = await getDoc(studentDocRef);
-      
-                  if (studentDocSnapshot.exists()) {
-                    // The user's UID exists in the students collection, proceed to redirect
-                    console.log("Logged in successfully", user.uid);
-                    setcanload(false);
-                    router.push("/Maindash");
-                    console.log("ended")
-                    setloader(false)
-
-                  } else {
-                    // The user's UID doesn't exist in the students collection, sign-out and display an error
-                    setloader(false)
-
-                    await signOut(auth2);
-                    console.error("User not found in the student collection.");
-                    alert("Something went wrong, please try again")
-
-                  }
-                } catch (error) {
-                  setloader(false)
-
-                  console.error(error.message);
-                  alert("Something went wrong, please try again")
-                  // Handle errors, show error messages to the user, etc.
-                }
-              }
-
-            }
-            }
-          }
-      
-        
-
-        // Now you can use this information for authentication or other purposes
-      } catch (error) {
-        setloader(false)
-
-        console.error("JWT verification failed:", error.message);
-        alert("Something went wrong, please try again")
-
-        // Handle invalid or expired tokens
+      if (!token || !year || !term || !canload) {
+        setloader(false);
+        return;
       }
 
-    }
+      setloader(true);
 
-    setloader(false)
+      try {
+        // SECURITY FIX: this used to verify the incoming JWT client-side
+        // with a secret key hardcoded right here in this component (shipped
+        // to every visitor's browser), then pull the plaintext password
+        // back out of it to sign in again. Both of those were real
+        // problems — see login.mjs in crestlandpage for the full writeup.
+        //
+        // Now: the token from the URL is a Firebase ID token (proof of
+        // identity, never contains a password). Year/term come along as
+        // plain query params (not secrets, just app state) rather than
+        // being unpacked from inside the token. We send the token to our
+        // own server-side API route, which is the only place allowed to
+        // use the Firebase Admin SDK to verify it safely. That route hands
+        // back a short-lived custom token for the same verified user,
+        // which we use to sign in for real, right here.
+        const response = await fetch("/api/exchange-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken: token }),
+        });
 
+        if (!response.ok) {
+          throw new Error("Token verification failed");
+        }
+
+        const { customToken } = await response.json();
+
+        setcanload(false);
+        const { user } = await signInWithCustomToken(auth2, customToken);
+
+        // Was previously hardcoded to "2023"/"1st" regardless of the
+        // actual student — now uses the real year/term from the URL.
+        localStorage.setItem("studentyear", year);
+        localStorage.setItem("studentterm", term);
+
+        const studentDocRef = doc(db, year, term, "students", user.uid);
+        const studentDocSnapshot = await getDoc(studentDocRef);
+
+        if (studentDocSnapshot.exists()) {
+          console.log("Logged in successfully", user.uid);
+          router.push("/Maindash");
+        } else {
+          await signOut(auth2);
+          console.error("User not found in the student collection.");
+          alert("Something went wrong, please try again");
+        }
+      } catch (error) {
+        console.error(error.message);
+        alert("Something went wrong, please try again");
+      } finally {
+        setloader(false);
+      }
     };
 
     signintoken();
-  }, []);
+  }, [token, year, term]);
 
 
 
@@ -255,8 +213,7 @@ const SignInForm = () => {
               required
             >
               <option value="">Please Select</option>
-              <option value="2023">2023</option>
-              <option value="2022">2022</option>
+              <option value="2026-2027">2026/2027</option>
 
               {/* Add year options */}
             </select>
