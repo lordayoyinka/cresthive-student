@@ -4,7 +4,7 @@ import {
   signInWithCustomToken,
 } from "firebase/auth";
 import { auth2 } from "../firebase/config";
-import { getDoc, doc, getFirestore } from "firebase/firestore";
+import { getDoc, doc, getFirestore, collection, getDocs, query, where } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/router";
 
@@ -25,8 +25,6 @@ const SignInForm = () => {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    term: "",
-    year: "",
   });
 
   const { token, year, term } = router.query;
@@ -101,11 +99,6 @@ const SignInForm = () => {
 
   
 
-  useEffect(() => {
-    localStorage.setItem("studentyear", formData.year);
-    localStorage.setItem("studentterm", formData.term);
-  }, [formData]);
-
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });
@@ -116,12 +109,21 @@ const SignInForm = () => {
 
     setloader(true)
 
+    // Same idea as crestlandpage's login.mjs — no year/term dropdown
+    // anymore. Look up whichever academicSessions document is currently
+    // marked active and use that automatically.
+    const activeSessionSnapshot = await getDocs(
+      query(collection(db, "academicSessions"), where("isActive", "==", true))
+    );
 
-    // Handle successful sign-in (e.g., redirect to dashboard)
+    if (activeSessionSnapshot.empty) {
+      setloader(false);
+      alert("No academic session has been set up yet. Please contact the school office.");
+      return;
+    }
 
-    const year = localStorage.getItem("studentyear");
-    const term = localStorage.getItem("studentterm");
-
+    const signInYear = activeSessionSnapshot.docs[0].id;
+    const signInTerm = "1st";
 
     try {
       const { user } = await signInWithEmailAndPassword(
@@ -131,12 +133,14 @@ const SignInForm = () => {
       );
 
       // Check if the user's UID exists in the students collection
-      const studentDocRef = doc(db, year, term, "students", user.uid);
+      const studentDocRef = doc(db, signInYear, signInTerm, "students", user.uid);
       const studentDocSnapshot = await getDoc(studentDocRef);
 
       if (studentDocSnapshot.exists()) {
         // The user's UID exists in the students collection, proceed to redirect
         console.log("Logged in successfully", user.uid);
+        localStorage.setItem("studentyear", signInYear);
+        localStorage.setItem("studentterm", signInTerm);
         router.push("/Maindash");
       } else {
         // The user's UID doesn't exist in the students collection, sign-out and display an error
@@ -199,44 +203,6 @@ const SignInForm = () => {
                 onChange={handleChange}
               />
             </div>
-          </div>
-
-          <div className="py-6 ">
-            <label htmlFor="year" className="">
-              Year
-            </label>
-            <select
-              name="year"
-              value={formData.year}
-              onChange={handleChange}
-              className="border w-full p-2 rounded focus:outline-none focus:ring focus:border-indigo-300"
-              required
-            >
-              <option value="">Please Select</option>
-              <option value="2026-2027">2026/2027</option>
-
-              {/* Add year options */}
-            </select>
-          </div>
-
-          <div className="">
-            <label htmlFor="term" className="">
-              Term
-            </label>
-            <select
-              name="term"
-              value={formData.term}
-              onChange={handleChange}
-              className="border w-full p-2 rounded focus:outline-none focus:ring focus:border-indigo-300"
-              required
-            >
-              <option value="">Please Select</option>
-              <option value="1st">1st</option>
-              <option value="2nd">2nd</option>
-              <option value="3rd">3rd</option>
-
-              {/* Add year options */}
-            </select>
           </div>
 
           <div className="flex items-center justify-between">
